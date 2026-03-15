@@ -1,0 +1,5 @@
+{
+  "name": "QuickShare",
+  "description": "A lightweight, temporary file sharing service. Files are stored in memory and deleted after download or 5 minutes.",
+  "requestFramePermissions": []
+}
