@@ -11,17 +11,23 @@ export const config = {
   },
 };
 
-function runMiddleware(req: any, res: any, fn: Function) {
+function runMiddleware(
+  req: VercelRequest,
+  res: VercelResponse,
+  fn: Function
+) {
   return new Promise((resolve, reject) => {
-    fn(req, res, (result: any) => {
+    fn(req as any, res as any, (result: any) => {
       if (result instanceof Error) return reject(result);
       return resolve(result);
     });
   });
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -36,13 +42,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     return res.status(200).json({
-      message: "File uploaded successfully",
+      message: "Upload successful",
       filename: file.originalname,
       size: file.size,
+      mimetype: file.mimetype,
     });
 
   } catch (error) {
     console.error("Upload error:", error);
-    return res.status(500).json({ error: "Upload failed" });
+
+    return res.status(500).json({
+      error: "File upload failed",
+    });
   }
 }
