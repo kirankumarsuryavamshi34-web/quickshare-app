@@ -1,22 +1,79 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# QuickShare
 
-# Run and deploy your AI Studio app
+QuickShare is a fast, temporary, and secure file-sharing web application.
+Users can upload files and generate secure links that allow limited downloads within a specified expiration time.
 
-This contains everything you need to run your app locally.
+## 🚀 Live Demo
 
-View your app in AI Studio: https://ai.studio/apps/8445bb7c-cde1-4662-8075-efb1bb9a956c
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
-4. ## Live Demo
 https://quickshare-app-nine.vercel.app
+
+## 🛠 Tech Stack
+
+- React
+- TypeScript
+- Vite
+- Node.js
+- Git
+- GitHub
+- Vercel (Deployment)
+
+## 📦 Features
+
+- Drag-and-drop file upload
+- Secure link generation
+- Temporary file sharing
+- Download limits
+- File expiration system
+
+## ⚙️ Run Locally
+
+### Prerequisites
+
+- Node.js installed
+
+### Steps
+
+1. Clone the repository
+
+```
+git clone https://github.com/kirankumarsuryavamshi34-web/quickshare-app.git
+```
+
+2. Navigate to the project folder
+
+```
+cd quickshare-app
+```
+
+3. Install dependencies
+
+```
+npm install
+```
+
+4. Start the development server
+
+```
+npm run dev
+```
+
+## 🌐 Deployment
+
+The project is deployed using **Vercel**.
+Every push to the main branch automatically triggers deployment.
+
+## 📌 Project Structure
+
+```
+quickshare
+ ├ api
+ │   └ upload.ts
+ ├ src
+ ├ index.html
+ ├ package.json
+ └ vite.config.ts
+```
+
+## 📄 License
+
+This project is open-source and available under the MIT License.
