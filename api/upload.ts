@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
+import { v4 as uuidv4 } from "uuid";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -10,6 +11,9 @@ export const config = {
     bodyParser: false,
   },
 };
+
+// 🔥 In-memory storage
+const files = new Map();
 
 function runMiddleware(
   req: VercelRequest,
@@ -41,11 +45,33 @@ export default async function handler(
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    return res.status(200).json({
-      message: "Upload successful",
+    // 🔥 Generate unique ID
+    const id = uuidv4();
+
+    const fileData = {
+      id,
       filename: file.originalname,
       size: file.size,
-      mimetype: file.mimetype,
+      buffer: file.buffer,
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 mins
+      downloadCount: 0,
+      maxDownloads: 10,
+    };
+
+    files.set(id, fileData);
+
+    // 🔥 Auto delete after expiry
+    setTimeout(() => {
+      files.delete(id);
+    }, 10 * 60 * 1000);
+
+    return res.status(200).json({
+      id,
+      filename: file.originalname,
+      size: file.size,
+      expiresAt: fileData.expiresAt,
+      downloadCount: 0,
+      maxDownloads: 10,
     });
 
   } catch (error) {
@@ -56,3 +82,6 @@ export default async function handler(
     });
   }
 }
+
+// 🔥 Export files so other APIs can use it
+export { files };
