@@ -52,6 +52,7 @@ export default async function handler(
       id,
       filename: file.originalname,
       size: file.size,
+      mimetype: file.mimetype,
       buffer: file.buffer,
       expiresAt: Date.now() + 10 * 60 * 1000, // 10 mins
       downloadCount: 0,

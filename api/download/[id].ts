@@ -8,7 +8,7 @@ export default function handler(req: any, res: any) {
 
   if (Date.now() > file.expiresAt) {
     files.delete(id);
-    return res.status(410).send("Expired");
+    return res.status(410).send("File Expired");
   }
 
   if (file.downloadCount >= file.maxDownloads) {
@@ -18,15 +18,20 @@ export default function handler(req: any, res: any) {
 
   file.downloadCount++;
 
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="${file.filename}"`
-  );
-
-  res.send(file.buffer);
-
   // Delete if limit reached
   if (file.downloadCount >= file.maxDownloads) {
     files.delete(id);
   }
+
+   // Set Content-Type if we stored mimetype, otherwise fallback
+  if (file.mimetype) {
+    res.setHeader("Content-Type", file.mimetype);
+  } else {
+    res.setHeader("Content-Type", "application/octet-stream");
+  }
+  res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+
+  // Send raw buffer
+  return res.send(file.buffer);
+  
 }
