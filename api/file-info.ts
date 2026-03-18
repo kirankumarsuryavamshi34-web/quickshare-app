@@ -1,37 +1,45 @@
-// api/file-info.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { files } from "./upload";
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   try {
-    const id = (req.query?.id || req.query?.file || req.query?.q) as string | undefined;
-    if (!id) return res.status(400).json({ error: "Missing id param" });
+    const id = req.query.id as string;
 
-    const rec = files.get(id);
-    if (!rec) return res.status(404).json({ error: "File not found or expired" });
-
-    // If the request includes a special query param `reveal=true` we will include filename.
-    // Normal info view for receiver should NOT show filename (per your requirement).
-    const reveal = String(req.query?.reveal) === "true";
-
-    const now = Date.now();
-    if (rec.expiresAt < now) {
-      files.delete(id);
-      return res.status(404).json({ error: "File expired" });
+    if (!id) {
+      return res.status(400).json({ error: "Missing file id" });
     }
 
-    res.status(200).json({
-      id: rec.id,
-      ...(reveal ? { filename: rec.filename } : {}),
-      size: rec.size,
-      url: rec.url,
-      expiresAt: rec.expiresAt,
-      downloadCount: rec.downloadCount,
-      maxDownloads: rec.maxDownloads,
-      hasPassword: !!rec.password,
+    const file = files.get(id);
+
+    if (!file) {
+      return res.status(404).json({ error: "File not found or expired" });
+    }
+
+    if (Date.now() > file.expiresAt) {
+      files.delete(id);
+      return res.status(404).json({ error: "File not found or expired" });
+    }
+
+    return res.status(200).json({
+      id: file.id,
+      size: file.size,
+      url: file.url,
+      expiresAt: file.expiresAt,
+      downloadCount: file.downloadCount,
+      maxDownloads: file.maxDownloads,
+      hasPassword: file.hasPassword,
     });
-  } catch (err: any) {
-    console.error("file-info error", err);
-    res.status(500).json({ error: "Internal server error" });
+  } catch (error: any) {
+    console.error("FILE INFO ERROR:", error);
+    return res.status(500).json({
+      error: error?.message || "Internal server error",
+    });
   }
 }

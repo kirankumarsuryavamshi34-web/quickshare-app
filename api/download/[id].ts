@@ -1,61 +1,75 @@
-// api/download/[id].ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { files } from "../upload"; // path depends on your project layout
+import { del, list } from "@vercel/blob";
+import { files } from "../upload";
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function getBlobUrl(prefix: string) {
+  const result = await list({
+    prefix,
+    limit: 1,
+  });
+  return result.blobs[0]?.url || null;
+}
+
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   try {
-    const id = (req.query?.id || (req.url && req.url.split("/").pop())) as string | undefined;
-    if (!id) return res.status(400).send("Missing id");
+    const { id } = req.query;
+    const fileId = Array.isArray(id) ? id[0] : id;
+    const password =
+      typeof req.query.password === "string" ? req.query.password.trim() : "";
 
-    const rec = files.get(id);
-    if (!rec) return res.status(404).send("File not found or expired.");
+    if (!fileId) {
+      return res.status(400).json({ error: "Missing file id" });
+    }
 
-    // If file is password protected, check query param or POST body:
-    // We'll allow ?password=... or Authorization header 'Bearer <password>' or POST { password }
-    // For GET request with password query:
-    const provided = (req.query?.password as string) || (req.headers.authorization ? String(req.headers.authorization).replace(/^Bearer\s+/i, "") : undefined);
+    const file = files.get(fileId);
 
-    if (rec.password) {
-      if (!provided || provided !== rec.password) {
-        // If request does not provide correct password, return 401
-        return res.status(401).send("Password required or incorrect.");
+    if (!file) {
+      return res.status(404).send("File not found or expired");
+    }
+
+    if (Date.now() > file.expiresAt) {
+      const expiredBlobUrl = await getBlobUrl(`quickshare/${file.id}-`);
+      if (expiredBlobUrl) {
+        try {
+          await del(expiredBlobUrl);
+        } catch {}
       }
+      files.delete(fileId);
+      return res.status(404).send("File not found or expired");
     }
 
-    const now = Date.now();
-    if (rec.expiresAt < now) {
-      files.delete(id);
-      return res.status(404).send("File expired");
+    if (file.hasPassword && file.password !== password) {
+      return res.status(401).send("Invalid password");
     }
 
-    // Increment download count and possibly delete after max reach
-    rec.downloadCount = (rec.downloadCount || 0) + 1;
-    if (rec.downloadCount >= rec.maxDownloads) {
-      // remove after sending (we'll let sending continue then delete record)
+    const blobUrl = await getBlobUrl(`quickshare/${file.id}-`);
+
+    if (!blobUrl) {
+      files.delete(fileId);
+      return res.status(404).send("File not found or expired");
     }
 
-    // If buffer present -> stream from memory
-    if (rec.buffer) {
-      res.setHeader("Content-Type", "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename="${rec.filename}"`);
-      res.setHeader("Content-Length", String(rec.size));
-      res.status(200).send(rec.buffer);
+    file.downloadCount += 1;
 
-      // Remove if over limit
-      if (rec.downloadCount >= rec.maxDownloads) files.delete(id);
-      return;
+    if (file.downloadCount >= file.maxDownloads) {
+      setTimeout(async () => {
+        try {
+          await del(blobUrl);
+        } catch {}
+        files.delete(fileId);
+      }, 1500);
     }
 
-    // If using blob (URL present), redirect to blob URL (it might be private — if private you must sign or serve differently)
-    if (rec.url) {
-      // If you saved file to Vercel Blob and rec.url is a signed URL, redirect to it.
-      return res.redirect(302, rec.url);
-    }
-
-    // fallback:
-    return res.status(500).send("File cannot be served.");
-  } catch (err: any) {
-    console.error("download error:", err);
-    return res.status(500).send("Server error");
+    return res.redirect(blobUrl);
+  } catch (error: any) {
+    console.error("DOWNLOAD ERROR:", error);
+    return res.status(500).send(error?.message || "Download failed");
   }
 }
