@@ -36,6 +36,19 @@ interface FileInfo {
   hasPassword?: boolean;
 }
 
+interface UploadResponse {
+  id?: string;
+  filename?: string;
+  size?: number;
+  url?: string;
+  expiresAt?: number;
+  downloadCount?: number;
+  maxDownloads?: number;
+  hasPassword?: boolean;
+  blobUrl?: string | null;
+  error?: string;
+}
+
 const FileIcon = ({
   filename,
   size = 32,
@@ -139,13 +152,42 @@ export default function App() {
     }
   }, []);
 
+  const parseServerResponse = (
+    xhr: XMLHttpRequest
+  ): { ok: boolean; json?: any; text?: string } => {
+    const raw = xhr.responseText || "";
+    const ct = (xhr.getResponseHeader("content-type") || "").toLowerCase();
+
+    if (ct.includes("application/json")) {
+      try {
+        return { ok: true, json: JSON.parse(raw) };
+      } catch (e) {
+        return { ok: false, text: `Invalid JSON response: ${String(e)}` };
+      }
+    }
+
+    return {
+      ok: false,
+      text: raw || `Server returned status ${xhr.status}`,
+    };
+  };
+
   const fetchFileInfo = async (id: string) => {
     try {
-      const res = await fetch(`/api/file-info?id=${id}`);
-      const data = await res.json();
+      const res = await fetch(`/api/file-info?id=${encodeURIComponent(id)}`);
+      const contentType = res.headers.get("content-type") || "";
+
+      let data: any = null;
+
+      if (contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(text || "Invalid server response");
+      }
 
       if (!res.ok) {
-        throw new Error(data.error || "File not found or expired");
+        throw new Error(data?.error || "File not found or expired");
       }
 
       setUploadedInfo(data);
@@ -154,7 +196,7 @@ export default function App() {
     } catch (err: any) {
       setError(err.message || "File not found or expired");
       setView("upload");
-      window.history.pushState({}, "", "/");
+      window.history.replaceState({}, "", "/");
     }
   };
 
@@ -163,6 +205,7 @@ export default function App() {
       setError("File size exceeds 50MB limit");
       return;
     }
+
     setFile(selectedFile);
     setError(null);
   };
@@ -170,8 +213,10 @@ export default function App() {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
-    const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile) handleFileSelection(droppedFile);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      handleFileSelection(droppedFile);
+    }
   }, []);
 
   const cancelUpload = () => {
@@ -208,40 +253,63 @@ export default function App() {
     xhr.addEventListener("load", async () => {
       setUploading(false);
 
-      try {
-        const contentType = xhr.getResponseHeader("content-type") || "";
-        let responseData: any = null;
+      const parsed = parseServerResponse(xhr);
 
-        if (contentType.includes("application/json")) {
-          responseData = JSON.parse(xhr.responseText);
-        }
-
-        if (xhr.status >= 200 && xhr.status < 300) {
-          if (!responseData || !responseData.url) {
-            throw new Error("Invalid server response");
-          }
-
-          setUploadedInfo(responseData);
-
-          const qr = await QRCode.toDataURL(responseData.url);
-          setQrCodeUrl(qr);
-
-          setView("success");
-          setPassword("");
-          window.history.pushState({}, "", "/");
-        } else {
-          throw new Error(
-            responseData?.error || responseData?.message || "Upload failed. Please try again."
-          );
-        }
-      } catch (err: any) {
-        setError(err.message || "Upload failed. Please try again.");
+      if (!parsed.ok) {
+        setError(parsed.text || "Upload failed. Please try again.");
+        return;
       }
+
+      const responseData: UploadResponse = parsed.json;
+
+      if (xhr.status < 200 || xhr.status >= 300) {
+        setError(responseData.error || "Upload failed. Please try again.");
+        return;
+      }
+
+      if (
+        !responseData.id ||
+        !responseData.url ||
+        !responseData.expiresAt ||
+        typeof responseData.size !== "number"
+      ) {
+        setError("Invalid server response");
+        return;
+      }
+
+      const normalized: FileInfo = {
+        id: responseData.id,
+        filename: responseData.filename,
+        size: responseData.size,
+        url: responseData.url,
+        expiresAt: responseData.expiresAt,
+        downloadCount: responseData.downloadCount ?? 0,
+        maxDownloads: responseData.maxDownloads ?? 10,
+        hasPassword: responseData.hasPassword ?? false,
+      };
+
+      setUploadedInfo(normalized);
+
+      try {
+        const qr = await QRCode.toDataURL(responseData.url);
+        setQrCodeUrl(qr);
+      } catch {
+        setQrCodeUrl("");
+      }
+
+      setView("success");
+      setPassword("");
+      window.history.replaceState({}, "", "/");
     });
 
     xhr.addEventListener("error", () => {
       setUploading(false);
       setError("Network error occurred.");
+    });
+
+    xhr.addEventListener("abort", () => {
+      setUploading(false);
+      setError("Upload cancelled.");
     });
 
     xhr.open("POST", "/api/upload");
@@ -250,9 +318,13 @@ export default function App() {
 
   const copyLink = async () => {
     if (!uploadedInfo?.url) return;
-    await navigator.clipboard.writeText(uploadedInfo.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(uploadedInfo.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Unable to copy link");
+    }
   };
 
   const formatSize = (bytes: number) => {
@@ -266,8 +338,13 @@ export default function App() {
   const handleDownload = () => {
     if (!uploadedInfo) return;
 
-    let downloadUrl = `/api/download/${uploadedInfo.id}`;
-    if (uploadedInfo.hasPassword && receiverPassword.trim()) {
+    let downloadUrl = `/api/download/${encodeURIComponent(uploadedInfo.id)}`;
+
+    if (uploadedInfo.hasPassword) {
+      if (!receiverPassword.trim()) {
+        setError("Password is required to open this file.");
+        return;
+      }
       downloadUrl += `?password=${encodeURIComponent(receiverPassword.trim())}`;
     }
 
@@ -283,14 +360,17 @@ export default function App() {
     setError(null);
     setPassword("");
     setReceiverPassword("");
-    window.history.pushState({}, "", "/");
+    setProgress(0);
+    window.history.replaceState({}, "", "/");
   };
 
   const renderUpload = () => (
     <motion.div
+      key="upload"
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -18 }}
+      transition={{ duration: 0.22 }}
       className="w-full max-w-[34rem] rounded-[2.2rem] border border-slate-200/80 dark:border-slate-800 bg-white/95 dark:bg-[#0b0f19]/95 shadow-[0_20px_70px_rgba(15,23,42,0.12)] backdrop-blur p-8 md:p-10"
     >
       <div className="text-center mb-8">
@@ -315,7 +395,7 @@ export default function App() {
             <AlertCircle className="mt-0.5 shrink-0" size={20} />
             <div className="flex-1">
               <p className="font-bold text-xl">Something went wrong</p>
-              <p className="mt-1 text-base opacity-90">{error}</p>
+              <p className="mt-1 text-base opacity-90 break-words">{error}</p>
             </div>
             <button onClick={() => setError(null)} className="hover:opacity-70">
               <X size={18} />
@@ -424,6 +504,7 @@ export default function App() {
               className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500"
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.2 }}
             />
           </div>
         </div>
@@ -444,7 +525,9 @@ export default function App() {
             <Clock size={18} />
           </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Expiry</p>
-          <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-200">10 Minutes</p>
+          <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-200">
+            10 Minutes
+          </p>
         </div>
 
         <div className="rounded-[1.4rem] border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-4">
@@ -452,7 +535,9 @@ export default function App() {
             <Trash2 size={18} />
           </div>
           <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Limit</p>
-          <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-200">10 Downloads</p>
+          <p className="mt-1 text-sm font-bold text-slate-800 dark:text-slate-200">
+            10 Downloads
+          </p>
         </div>
       </div>
     </motion.div>
@@ -460,9 +545,11 @@ export default function App() {
 
   const renderSuccess = () => (
     <motion.div
+      key="success"
       initial={{ opacity: 0, scale: 0.96 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.96 }}
+      transition={{ duration: 0.22 }}
       className="w-full max-w-[34rem] rounded-[2.2rem] border border-slate-200/80 dark:border-slate-800 bg-white/95 dark:bg-[#0b0f19]/95 shadow-[0_20px_70px_rgba(15,23,42,0.12)] p-8 md:p-10"
     >
       <div className="text-center mb-8">
@@ -504,7 +591,13 @@ export default function App() {
 
         <div className="rounded-[2rem] border border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-8 text-center">
           <div className="mx-auto w-fit rounded-[1.5rem] bg-white p-4 shadow-lg">
-            <img src={qrCodeUrl} alt="QR Code" className="h-48 w-48" />
+            {qrCodeUrl ? (
+              <img src={qrCodeUrl} alt="QR Code" className="h-48 w-48" />
+            ) : (
+              <div className="flex h-48 w-48 items-center justify-center text-slate-400">
+                QR unavailable
+              </div>
+            )}
           </div>
           <p className="mt-5 text-xs font-bold uppercase tracking-[0.25em] text-slate-400">
             Scan to open
@@ -526,9 +619,11 @@ export default function App() {
 
   const renderDownload = () => (
     <motion.div
+      key="download"
       initial={{ opacity: 0, y: 18 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -18 }}
+      transition={{ duration: 0.22 }}
       className="w-full max-w-[34rem] rounded-[2.2rem] border border-slate-200/80 dark:border-slate-800 bg-white/95 dark:bg-[#0b0f19]/95 shadow-[0_20px_70px_rgba(15,23,42,0.12)] p-8 md:p-10"
     >
       <div className="text-center mb-8">

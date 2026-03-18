@@ -1,6 +1,7 @@
+// api/upload.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
-import { put, list, del } from "@vercel/blob";
+import { put } from "@vercel/blob";
 import { v4 as uuidv4 } from "uuid";
 
 const upload = multer({
@@ -13,11 +14,7 @@ export const config = {
   },
 };
 
-function runMiddleware(
-  req: VercelRequest,
-  res: VercelResponse,
-  fn: Function
-) {
+function runMiddleware(req: VercelRequest, res: VercelResponse, fn: Function) {
   return new Promise((resolve, reject) => {
     fn(req as any, res as any, (result: any) => {
       if (result instanceof Error) return reject(result);
@@ -26,6 +23,7 @@ function runMiddleware(
   });
 }
 
+// In-memory map (note: ephemeral on serverless cold starts).
 type FileRecord = {
   id: string;
   filename: string;
@@ -39,46 +37,47 @@ type FileRecord = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
-  var quickshareFiles: Map<string, FileRecord> | undefined;
+  var __quickshare_files__: Map<string, FileRecord> | undefined;
 }
 
-const files = global.quickshareFiles || new Map<string, FileRecord>();
-global.quickshareFiles = files;
+const files = global.__quickshare_files__ || new Map<string, FileRecord>();
+global.__quickshare_files__ = files;
 
-async function cleanupExpiredFiles() {
-  const now = Date.now();
-
-  for (const [id, file] of files.entries()) {
-    if (file.expiresAt <= now) {
-      try {
-        await del(file.url);
-      } catch {}
-      files.delete(id);
-    }
-  }
+async function safeJsonError(res: VercelResponse, status: number, message: string, details?: any) {
+  // Always send JSON errors so client can parse them safely.
+  res.setHeader("Content-Type", "application/json");
+  res.status(status).json({ error: message, details: details ? String(details) : undefined });
 }
 
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Top-level try/catch to prevent unhandled exceptions producing HTML
   try {
-    await cleanupExpiredFiles();
+    if (req.method !== "POST") {
+      return safeJsonError(res, 405, "Method not allowed");
+    }
+
+    // ensure environment / blob token exists — helpful early fail
+    if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.VERCEL_BLOB_READ_WRITE_TOKEN) {
+      console.warn("Missing blob token env var. Set BLOB_READ_WRITE_TOKEN or VERCEL_BLOB_READ_WRITE_TOKEN.");
+      return safeJsonError(
+        res,
+        500,
+        "Server misconfiguration: missing blob token. Please set BLOB_READ_WRITE_TOKEN in Vercel settings."
+      );
+    }
+
     await runMiddleware(req, res, upload.single("file"));
 
     const file = (req as any).file;
-    const passwordRaw = ((req as any).body?.password || "").trim();
-    const password = passwordRaw ? passwordRaw : null;
+    // multer puts non-file form fields on req.body when bodyParser=false and using multer
+    const passwordRaw = (req as any).body?.password ?? "";
+    const password = typeof passwordRaw === "string" ? passwordRaw.trim() || null : null;
 
     if (!file) {
-      return res.status(400).json({ error: "No file uploaded" });
+      return safeJsonError(res, 400, "No file uploaded");
     }
 
+    // enforce unique password among active files
     if (password) {
       for (const existing of files.values()) {
         if (
@@ -87,30 +86,35 @@ export default async function handler(
           existing.expiresAt > Date.now() &&
           existing.downloadCount < existing.maxDownloads
         ) {
-          return res.status(400).json({
-            error:
-              "This password is already being used by another active file. Use a different password.",
-          });
+          return safeJsonError(res, 400, "This password is already in use by an active file. Choose another.");
         }
       }
     }
 
+    // Upload to Vercel Blob — wrap with try/catch to return JSON error on failure.
     const id = uuidv4();
     const pathname = `quickshare/${id}-${file.originalname}`;
 
-    const blob = await put(pathname, file.buffer, {
-      access: "public",
-      addRandomSuffix: false,
-      contentType: file.mimetype || "application/octet-stream",
-    });
+    let blobResult;
+    try {
+      blobResult = await put(pathname, file.buffer, {
+        access: "public",
+        addRandomSuffix: false,
+        contentType: file.mimetype || "application/octet-stream",
+      });
+    } catch (err) {
+      console.error("Blob put failed:", err);
+      return safeJsonError(res, 500, "Failed to store file in blob storage", err);
+    }
 
-    const expiresAt = Date.now() + 10 * 60 * 1000;
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     const fileData: FileRecord = {
       id,
       filename: file.originalname,
       size: file.size,
-      url: `${req.headers.origin || ""}/download/${id}`,
+      // generate a link that points to your download handler (the download handler will redirect to blob)
+      url: `${req.headers.origin || `https://${req.headers.host || process.env.VERCEL_URL || ""}`}/download/${id}`,
       expiresAt,
       downloadCount: 0,
       maxDownloads: 10,
@@ -120,6 +124,7 @@ export default async function handler(
 
     files.set(id, fileData);
 
+    res.setHeader("Content-Type", "application/json");
     return res.status(200).json({
       id,
       filename: file.originalname,
@@ -129,14 +134,12 @@ export default async function handler(
       downloadCount: 0,
       maxDownloads: 10,
       hasPassword: !!password,
-      blobUrl: blob.url,
+      // include blob url only for debugging (do not expose in production if you want guarded access)
+      blobUrl: blobResult?.url ?? null,
     });
-  } catch (error: any) {
-    console.error("UPLOAD ERROR:", error);
-    return res.status(500).json({
-      error: error?.message || "File upload failed",
-    });
+  } catch (topErr) {
+    console.error("UPLOAD handler top-level error:", topErr);
+    // Even on unexpected exceptions, return JSON
+    return safeJsonError(res, 500, "Unexpected server error during upload", String(topErr));
   }
 }
-
-export { files };
