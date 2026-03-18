@@ -108,7 +108,7 @@ export default function App() {
 
   const fetchFileInfo = async (id: string) => {
     try {
-      const res = await fetch(`/api/file-info/${id}`);
+      const res = await fetch(`/api/file-info?id=${id}`);
       if (!res.ok) throw new Error("File not found or expired");
       const data = await res.json();
       setUploadedInfo({ id, ...data });
