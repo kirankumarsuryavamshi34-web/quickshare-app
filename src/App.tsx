@@ -13,6 +13,7 @@ interface FileInfo {
   id: string;
   filename: string;
   size: number;
+  url: string;
   expiresAt: number;
   downloadCount: number;
   maxDownloads: number;
@@ -81,17 +82,6 @@ export default function App() {
       localStorage.setItem("theme", "light");
     }
   }, [isDark]);
-
-  // Check if we are on a download page
-  useEffect(() => {
-    const path = window.location.pathname;
-    if (path.startsWith("/download/")) {
-      const id = path.split("/")[2];
-      if (id) {
-        fetchFileInfo(id);
-      }
-    }
-  }, []);
 
   useEffect(() => {
   const onErr = (msg: any, url?: string, line?: number, col?: number, error?: Error) => {
@@ -162,58 +152,20 @@ export default function App() {
       }
     });
 
-    // in App.tsx (replace the existing xhr.addEventListener("load", ...) block)
 xhr.addEventListener("load", async () => {
-  const contentType = (xhr.getResponseHeader("content-type") || "").toLowerCase();
-  const text = xhr.responseText;
-
-  // Successful HTTP status
   if (xhr.status >= 200 && xhr.status < 300) {
-    if (contentType.includes("application/json")) {
-      try {
-        const data = JSON.parse(text);
+    const data = JSON.parse(xhr.responseText);
 
-        if (!data?.id) {
-          console.error("Missing id in server response:", data);
-          setError("Server returned invalid data. Try again.");
-          setUploading(false);
-          return;
-        }
+    setUploadedInfo(data);
 
-        setUploadedInfo(data);
-        const shareUrl = `${window.location.origin}/download/${data.id}`;
-        try {
-          const qr = await QRCode.toDataURL(shareUrl);
-          setQrCodeUrl(qr);
-        } catch (qrErr) {
-          console.error("QR generation failed", qrErr);
-        }
-        setView("success");
-      } catch (e) {
-        console.error("Invalid JSON from server:", text);
-        setError("Invalid server response. Please try again.");
-      }
-    } else {
-      // 2xx but not JSON (HTML returned) -> show helpful error + log
-      console.error("Expected JSON but got:", text);
-      setError("Unexpected server response. Please try again.");
-    }
+    const shareUrl = data.url; // ✅ FIX
 
+    const qr = await QRCode.toDataURL(shareUrl);
+    setQrCodeUrl(qr);
+
+    setView("success");
   } else {
-    // Non-2xx: try parse JSON error, otherwise fallback to raw text
-    if (contentType.includes("application/json")) {
-      try {
-        const errObj = JSON.parse(text);
-        setError(errObj.error || `Upload failed (status ${xhr.status})`);
-      } catch {
-        console.error("Bad JSON error response:", text);
-        setError(`Upload failed (status ${xhr.status})`);
-      }
-    } else {
-      // Often Vercel returns an HTML error page — handle gracefully
-      console.error("Server error (non-JSON):", text);
-      setError(`Upload failed (status ${xhr.status}). Server returned HTML.`);
-    }
+    setError("Upload failed");
   }
 
   setUploading(false);
@@ -230,10 +182,7 @@ xhr.addEventListener("load", async () => {
 
   const copyLink = () => {
     if (!uploadedInfo) return;
-    const shareUrl = `${window.location.origin}/download/${uploadedInfo.id}`;
-    navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(uploadedInfo.url);
   };
 
   const formatSize = (bytes: number) => {
@@ -404,7 +353,7 @@ xhr.addEventListener("load", async () => {
         <div className="group relative">
           <div className="p-5 bg-gray-50 dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 flex items-center justify-between gap-4 transition-all hover:border-indigo-200 dark:hover:border-indigo-900">
             <div className="flex-1 truncate text-sm font-mono text-gray-600 dark:text-gray-300">
-              {`${window.location.origin}/download/${uploadedInfo?.id}`}
+              {uploadedInfo?.url}
             </div>
             <button 
               onClick={copyLink}
@@ -495,7 +444,7 @@ xhr.addEventListener("load", async () => {
 
       <div className="space-y-4">
         <a
-          href={`/api/download?id=${uploadedInfo?.id}`}
+          href={uploadedInfo?.url}
           className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-bold shadow-xl shadow-indigo-200 dark:shadow-none hover:bg-indigo-700 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center gap-3"
           onClick={() => {
             // If it's the last download, go back to upload after a bit
