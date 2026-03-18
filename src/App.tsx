@@ -93,6 +93,19 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+  const onErr = (msg: any, url?: string, line?: number, col?: number, error?: Error) => {
+    console.error("GLOBAL ERROR:", { msg, url, line, col, error });
+  };
+  window.addEventListener("error", onErr);
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error("Unhandled rejection:", e.reason);
+  });
+  return () => {
+    window.removeEventListener("error", onErr);
+  };
+}, []);
+
   const fetchFileInfo = async (id: string) => {
     try {
       const res = await fetch(`/api/file-info/${id}`);
@@ -149,21 +162,62 @@ export default function App() {
       }
     });
 
-    xhr.addEventListener("load", async () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const data = JSON.parse(xhr.responseText);
+    // in App.tsx (replace the existing xhr.addEventListener("load", ...) block)
+xhr.addEventListener("load", async () => {
+  const contentType = (xhr.getResponseHeader("content-type") || "").toLowerCase();
+  const text = xhr.responseText;
+
+  // Successful HTTP status
+  if (xhr.status >= 200 && xhr.status < 300) {
+    if (contentType.includes("application/json")) {
+      try {
+        const data = JSON.parse(text);
+
+        if (!data?.id) {
+          console.error("Missing id in server response:", data);
+          setError("Server returned invalid data. Try again.");
+          setUploading(false);
+          return;
+        }
+
         setUploadedInfo(data);
-        
         const shareUrl = `${window.location.origin}/download/${data.id}`;
-        const qr = await QRCode.toDataURL(shareUrl);
-        setQrCodeUrl(qr);
-        
+        try {
+          const qr = await QRCode.toDataURL(shareUrl);
+          setQrCodeUrl(qr);
+        } catch (qrErr) {
+          console.error("QR generation failed", qrErr);
+        }
         setView("success");
-      } else {
-        setError("Upload failed. Please try again.");
+      } catch (e) {
+        console.error("Invalid JSON from server:", text);
+        setError("Invalid server response. Please try again.");
       }
-      setUploading(false);
-    });
+    } else {
+      // 2xx but not JSON (HTML returned) -> show helpful error + log
+      console.error("Expected JSON but got:", text);
+      setError("Unexpected server response. Please try again.");
+    }
+
+  } else {
+    // Non-2xx: try parse JSON error, otherwise fallback to raw text
+    if (contentType.includes("application/json")) {
+      try {
+        const errObj = JSON.parse(text);
+        setError(errObj.error || `Upload failed (status ${xhr.status})`);
+      } catch {
+        console.error("Bad JSON error response:", text);
+        setError(`Upload failed (status ${xhr.status})`);
+      }
+    } else {
+      // Often Vercel returns an HTML error page — handle gracefully
+      console.error("Server error (non-JSON):", text);
+      setError(`Upload failed (status ${xhr.status}). Server returned HTML.`);
+    }
+  }
+
+  setUploading(false);
+});
 
     xhr.addEventListener("error", () => {
       setError("Network error occurred.");
