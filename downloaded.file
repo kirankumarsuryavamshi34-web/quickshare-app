@@ -1,0 +1,30 @@
+HTTP/1.1 200 OK
+Accept-Ranges: bytes
+Access-Control-Allow-Origin: *
+Age: 213
+Cache-Control: public, max-age=0, must-revalidate
+Content-Disposition: inline; filename="index.html"
+Content-Length: 409
+Content-Type: text/html; charset=utf-8
+Date: Wed, 18 Mar 2026 02:12:40 GMT
+Etag: "b3d990369a7e2788aafa79276a18563c"
+Last-Modified: Wed, 18 Mar 2026 02:09:07 GMT
+Server: Vercel
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+X-Vercel-Cache: HIT
+X-Vercel-Id: bom1::wwj87-1773799960608-35f4da80af45
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script type="module" crossorigin src="/assets/index-BJcujiZo.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C5ogSjaX.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+

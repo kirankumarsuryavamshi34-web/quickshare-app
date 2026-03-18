@@ -495,7 +495,7 @@ xhr.addEventListener("load", async () => {
 
       <div className="space-y-4">
         <a
-          href={`/api/download/${uploadedInfo?.id}`}
+          href={`/api/download?id=${uploadedInfo?.id}`}
           className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-bold shadow-xl shadow-indigo-200 dark:shadow-none hover:bg-indigo-700 hover:-translate-y-0.5 active:translate-y-0 transition-all flex items-center justify-center gap-3"
           onClick={() => {
             // If it's the last download, go back to upload after a bit
