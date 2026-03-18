@@ -1,3 +1,4 @@
+// api/upload.ts
 import { put } from "@vercel/blob";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
@@ -24,31 +25,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    // parse multipart with multer
     await runMiddleware(req, res, upload.single("file"));
-    const file = (req as any).file;
-
-    if (!file) {
+    const f = (req as any).file;
+    if (!f) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
+    // generate id and upload path
     const id = uuidv4();
+    const filenameSafe = f.originalname.replace(/\s+/g, "_");
+    const key = `uploads/${id}-${filenameSafe}`;
 
-    const blob = await put(`uploads/${id}-${file.originalname}`, file.buffer, {
+    // NOTE: require BLOB_READ_WRITE_TOKEN in Vercel env vars
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!token) {
+      console.error("Missing BLOB_READ_WRITE_TOKEN env var");
+      return res.status(500).json({ error: "Server misconfiguration (missing token)" });
+    }
+
+    // Upload to Vercel Blob
+    const blob = await put(key, f.buffer, {
       access: "public",
+      // pass token explicitly (safe server-side)
+      token,
+      // you can add contentType if you want:
+      // contentType: f.mimetype
     });
 
+    // Build response
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
     return res.status(200).json({
       id,
-      filename: file.originalname,
-      size: file.size,
-      url: blob.url, // 🔥 MAIN THING
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      filename: f.originalname,
+      size: f.size,
+      url: blob.url,
+      expiresAt,
       downloadCount: 0,
       maxDownloads: 10,
     });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Upload failed" });
+  } catch (err: any) {
+    console.error("Upload handler error:", err && err.stack ? err.stack : err);
+    // If blob library throws an error, return JSON so client can parse it
+    return res.status(500).json({ error: "Upload failed", details: String(err?.message || err) });
   }
 }
