@@ -1,79 +1,61 @@
 // api/download/[id].ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-
-const internals = require("../upload.ts")?.__internal;
-
-function getFilenameFromDisposition(header: string | null) {
-  if (!header) return null;
-  const m = header.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i);
-  return m ? decodeURIComponent(m[1]) : null;
-}
+import { files } from "../upload"; // path depends on your project layout
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const files = internals?.files as Map<any, any> | undefined;
-  const passwordToId = internals?.passwordToId as Map<any, any> | undefined;
+  try {
+    const id = (req.query?.id || (req.url && req.url.split("/").pop())) as string | undefined;
+    if (!id) return res.status(400).send("Missing id");
 
-  if (!files) {
-    return res.status(500).json({ error: "Internal storage unavailable" });
-  }
+    const rec = files.get(id);
+    if (!rec) return res.status(404).send("File not found or expired.");
 
-  const id = typeof req.query.id === "string" ? req.query.id : Array.isArray(req.query.id) ? req.query.id[0] : undefined;
-  if (!id) return res.status(400).json({ error: "Missing id" });
+    // If file is password protected, check query param or POST body:
+    // We'll allow ?password=... or Authorization header 'Bearer <password>' or POST { password }
+    // For GET request with password query:
+    const provided = (req.query?.password as string) || (req.headers.authorization ? String(req.headers.authorization).replace(/^Bearer\s+/i, "") : undefined);
 
-  const f = files.get(id);
-  if (!f) return res.status(404).json({ error: "File not found or expired" });
-
-  // If GET with token => allow direct file response
-  if (req.method === "GET") {
-    const token = typeof req.query.token === "string" ? req.query.token : undefined;
-    if (!token || token !== f.token) {
-      return res.status(401).json({ error: "Invalid or missing token" });
+    if (rec.password) {
+      if (!provided || provided !== rec.password) {
+        // If request does not provide correct password, return 401
+        return res.status(401).send("Password required or incorrect.");
+      }
     }
 
-    // Serve file binary directly with filename
-    res.setHeader("Content-Type", f.mimetype || "application/octet-stream");
-    // Allow frontend fetch to read headers if necessary
-    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.filename)}"`);
-    // increment count and maybe delete
-    f.downloadCount = (f.downloadCount || 0) + 1;
-    if (f.downloadCount >= f.maxDownloads) {
+    const now = Date.now();
+    if (rec.expiresAt < now) {
       files.delete(id);
-      if (f.password && passwordToId) passwordToId.delete(f.password);
-    } else {
-      files.set(id, f);
+      return res.status(404).send("File expired");
     }
 
-    return res.status(200).send(Buffer.from(f.buffer));
+    // Increment download count and possibly delete after max reach
+    rec.downloadCount = (rec.downloadCount || 0) + 1;
+    if (rec.downloadCount >= rec.maxDownloads) {
+      // remove after sending (we'll let sending continue then delete record)
+    }
+
+    // If buffer present -> stream from memory
+    if (rec.buffer) {
+      res.setHeader("Content-Type", "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${rec.filename}"`);
+      res.setHeader("Content-Length", String(rec.size));
+      res.status(200).send(rec.buffer);
+
+      // Remove if over limit
+      if (rec.downloadCount >= rec.maxDownloads) files.delete(id);
+      return;
+    }
+
+    // If using blob (URL present), redirect to blob URL (it might be private — if private you must sign or serve differently)
+    if (rec.url) {
+      // If you saved file to Vercel Blob and rec.url is a signed URL, redirect to it.
+      return res.redirect(302, rec.url);
+    }
+
+    // fallback:
+    return res.status(500).send("File cannot be served.");
+  } catch (err: any) {
+    console.error("download error:", err);
+    return res.status(500).send("Server error");
   }
-
-  // If POST => accept JSON body with password to authorize
-  if (req.method === "POST") {
-    let body: any = {};
-    try {
-      body = typeof req.body === "object" ? req.body : JSON.parse(String(req.body || "{}"));
-    } catch (e) {
-      body = {};
-    }
-    const password = body.password ? String(body.password) : undefined;
-    if (!password || password !== f.password) {
-      return res.status(401).json({ error: "Invalid password" });
-    }
-
-    res.setHeader("Content-Type", f.mimetype || "application/octet-stream");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(f.filename)}"`);
-
-    f.downloadCount = (f.downloadCount || 0) + 1;
-    if (f.downloadCount >= f.maxDownloads) {
-      files.delete(id);
-      if (f.password && passwordToId) passwordToId.delete(f.password);
-    } else {
-      files.set(id, f);
-    }
-
-    return res.status(200).send(Buffer.from(f.buffer));
-  }
-
-  return res.status(405).json({ error: "Method not allowed" });
 }

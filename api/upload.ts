@@ -2,34 +2,35 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
 import { v4 as uuidv4 } from "uuid";
-import crypto from "crypto";
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+});
 
 export const config = {
-  api: { bodyParser: false }, // multer will handle
+  api: {
+    bodyParser: false,
+  },
 };
 
-// In-memory store (prototype).
-// For production replace with a persistent store or Vercel Blob.
-type FileData = {
+// In-memory store for quick dev fallback.
+// If you configure Vercel Blob (see instructions after code), that will be used instead.
+type FileRecord = {
   id: string;
   filename: string;
-  buffer: Buffer;
   size: number;
-  mimetype: string;
-  token: string; // share token included in link/QR
-  password?: string; // optional password
+  buffer?: Buffer;         // present when using in-memory
+  blobPath?: string;       // present when using blob
+  password?: string | null;
+  url: string;
   expiresAt: number;
   downloadCount: number;
   maxDownloads: number;
-  createdAt: number;
 };
 
-const files = new Map<string, FileData>();
-// map password -> fileId to enforce unique password for active files
-const passwordToId = new Map<string, string>();
+const files = new Map<string, FileRecord>();
 
+// Run middleware helper (multer)
 function runMiddleware(req: VercelRequest, res: VercelResponse, fn: Function) {
   return new Promise((resolve, reject) => {
     fn(req as any, res as any, (result: any) => {
@@ -37,6 +38,37 @@ function runMiddleware(req: VercelRequest, res: VercelResponse, fn: Function) {
       return resolve(result);
     });
   });
+}
+
+// If you configure Vercel Blob, we will attempt to put blob there.
+// Required envs: BLOB_READ_WRITE_TOKEN and BLOB_STORE_NAME
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN || process.env.VERCEL_BLOB_TOKEN || "";
+const BLOB_STORE = process.env.BLOB_STORE_NAME || ""; // e.g. "quickshare-storage"
+let blobClientAvailable = false;
+let putFromBuffer: (path: string, buffer: Buffer, opts?: any) => Promise<{ url: string }>;
+
+if (BLOB_TOKEN && BLOB_STORE) {
+  try {
+    // dynamic import so app still runs without dependency for local dev.
+    // You must add @vercel/blob to dependencies for this to actually work in production.
+    // npm i @vercel/blob
+    // See instructions below.
+    // IMPORTANT: the put interface differs by release; this uses the put helper pattern.
+    // We'll import the library if present.
+    // NOTE: if @vercel/blob isn't installed, this block fails and fallback stays to in-memory.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { put } = require("@vercel/blob");
+    putFromBuffer = async (path: string, buffer: Buffer, opts = {}) => {
+      // put returns { url } in recent versions
+      // path example: `uploads/myfile-uuid.pdf`
+      return await put(path, buffer, opts);
+    };
+    blobClientAvailable = true;
+    console.log("Vercel Blob integration available");
+  } catch (err: any) {
+    console.warn("Vercel Blob not initialized (dependency missing or import failed). Falling back to in-memory store.", err?.message || err);
+    blobClientAvailable = false;
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -47,76 +79,93 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await runMiddleware(req, res, upload.single("file"));
 
-    const file = (req as any).file;
-    // text fields (like password) are available on req.body (multer)
-    const body = (req as any).body || {};
-    const password = body.password ? String(body.password).trim() : undefined;
+    const file = (req as any).file as { originalname: string; buffer: Buffer; size: number } | undefined;
+    const password = (req as any).body?.password ? String((req as any).body.password).trim() : null;
+    const maxDownloads = Number((req as any).body?.maxDownloads || 10);
 
     if (!file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
+    // If a password is provided, ensure uniqueness among active files
     if (password) {
-      // password uniqueness check
-      if (passwordToId.has(password)) {
-        return res.status(400).json({ error: "Password already in use for another active file" });
-      }
-      if (password.length < 4) {
-        return res.status(400).json({ error: "Password should be at least 4 characters" });
+      for (const rec of files.values()) {
+        if (rec.password && rec.password === password) {
+          return res.status(409).json({ error: "Password already in use by an active file. Choose a different password or wait for that file to expire." });
+        }
       }
     }
 
     const id = uuidv4();
-    // secure random token for share link
-    const token = crypto.randomBytes(18).toString("hex");
-
-    const now = Date.now();
-    const expiresAt = now + 10 * 60 * 1000; // 10 minutes (changeable)
-
-    const fileData: FileData = {
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const recordBase = {
       id,
       filename: file.originalname,
-      buffer: Buffer.from(file.buffer),
       size: file.size,
-      mimetype: file.mimetype || "application/octet-stream",
-      token,
       password,
+      url: `${getBaseUrl(req)}/download/${id}`,
       expiresAt,
       downloadCount: 0,
-      maxDownloads: 10,
-      createdAt: now,
-    };
+      maxDownloads,
+    } as FileRecord;
 
-    files.set(id, fileData);
-    if (password) passwordToId.set(password, id);
-
-    // schedule auto-delete at expiry
-    setTimeout(() => {
-      const f = files.get(id);
-      if (f && Date.now() >= f.expiresAt) {
-        files.delete(id);
-        if (f.password) passwordToId.delete(f.password);
+    // If blob available, store there
+    if (blobClientAvailable && putFromBuffer) {
+      // choose path inside blob store
+      const path = `uploads/${id}-${sanitizeFilename(file.originalname)}`;
+      try {
+        const { url } = await putFromBuffer(path, file.buffer, { access: "private", token: BLOB_TOKEN, store: BLOB_STORE });
+        const rec: FileRecord = {
+          ...recordBase,
+          blobPath: path,
+          url, // the URL returned by blob put
+        };
+        files.set(id, rec);
+      } catch (err: any) {
+        console.error("Blob put failed, falling back to in-memory. Error:", err?.message || err);
+        const rec: FileRecord = { ...recordBase, buffer: file.buffer };
+        files.set(id, rec);
       }
-    }, Math.max(1000, expiresAt - Date.now()));
+    } else {
+      // fallback: keep file buffer in memory
+      const rec: FileRecord = { ...recordBase, buffer: file.buffer };
+      files.set(id, rec);
+    }
 
-    // Construct share URL using request origin if possible
-    const proto = req.headers["x-forwarded-proto"] || req.headers["x-forwarded-protocol"] || (req.headers["referer"] ? new URL(String(req.headers["referer"])).protocol.replace(":", "") : "https");
-    const host = req.headers.host || "";
-    const origin = proto ? `${proto}://${host}` : `https://${host}`;
-    const shareUrl = `${origin}/download/${id}?token=${token}`;
+    // Auto-delete after expiry (in-memory housekeeping)
+    setTimeout(() => {
+      files.delete(id);
+    }, 10 * 60 * 1000);
 
+    // Respond with metadata for UI
     return res.status(200).json({
       id,
-      url: shareUrl,
+      url: `${getBaseUrl(req)}/download/${id}`,
       expiresAt,
       size: file.size,
-      maxDownloads: fileData.maxDownloads,
+      maxDownloads,
+      downloadCount: 0,
+      // do not include filename for sender view? sender already sees it client-side; include for sender-only if needed
+      filename: file.originalname,
     });
-  } catch (err: any) {
-    console.error("Upload error:", err);
-    return res.status(500).json({ error: "File upload failed" });
+
+  } catch (error) {
+    console.error("Upload error:", error);
+    return res.status(500).json({ error: "File upload failed", details: String(error) });
   }
 }
 
-// export the maps so other API files in same deployment can reuse (useful for local dev)
-module.exports.__internal = { files, passwordToId };
+// Helper functions
+function sanitizeFilename(name: string) {
+  return name.replace(/[^a-zA-Z0-9.\-_]/g, "_").slice(0, 200);
+}
+
+function getBaseUrl(req: VercelRequest) {
+  // prefer header forwarded host if present
+  const proto = (req.headers["x-forwarded-proto"] as string) || "https";
+  const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string) || "localhost:3000";
+  return `${proto}://${host}`;
+}
+
+// export store so other api routes can access it (file-info/download)
+export { files };

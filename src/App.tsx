@@ -1,23 +1,24 @@
 // src/App.tsx
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import QRCode from "qrcode";
+import { motion, AnimatePresence } from "framer-motion";
 import {
-  Upload, File, Download, Copy, Check, Trash2,
-  Clock, AlertCircle, Sun, Moon, X, FileText, Image as ImageIcon,
+  Upload, File, Download, Copy, Check, Clock,
+  AlertCircle, Sun, Moon, X, FileText, Image as ImageIcon,
   Music, Video, Archive, ExternalLink
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import QRCode from "qrcode";
 
 type View = "upload" | "success" | "download";
 
-interface FileInfo {
+interface UploadedInfo {
   id: string;
-  size: number;
-  url?: string; // present for sender after upload
+  url: string;
   expiresAt: number;
-  downloadCount: number;
+  size: number;
   maxDownloads: number;
-  requiresPassword?: boolean;
+  downloadCount: number;
+  filename?: string;
+  hasPassword?: boolean;
 }
 
 export default function App() {
@@ -26,381 +27,321 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [uploadedInfo, setUploadedInfo] = useState<FileInfo | null>(null);
-  const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
+  const [uploadedInfo, setUploadedInfo] = useState<UploadedInfo | null>(null);
+  const [qr, setQr] = useState<string>("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isDark, setIsDark] = useState(() => {
-    if (typeof window !== "undefined") return localStorage.getItem("theme") === "dark";
-    return false;
-  });
+  const [isDark, setIsDark] = useState(false);
 
   const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add("dark");
-      localStorage.setItem("theme", "dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-      localStorage.setItem("theme", "light");
-    }
+    // Apply theme class to document
+    document.documentElement.classList.toggle("dark", isDark);
+    localStorage.setItem("theme", isDark ? "dark" : "light");
   }, [isDark]);
 
-  // If user navigates to /download/:id we fetch file-info
   useEffect(() => {
+    // if visiting /download/:id, fetch file-info automatically
     const path = window.location.pathname;
     if (path.startsWith("/download/")) {
       const id = path.split("/")[2];
       if (id) {
-        setView("download");
         fetchFileInfo(id);
       }
     }
   }, []);
 
-  const fetchFileInfo = async (id: string) => {
+  async function fetchFileInfo(id: string) {
     try {
-      setError(null);
       const res = await fetch(`/api/file-info?id=${encodeURIComponent(id)}`);
       if (!res.ok) {
-        const j = await res.json().catch(() => null);
-        throw new Error((j && j.error) || "File not found or expired");
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "File not found or expired");
       }
       const data = await res.json();
-      setUploadedInfo({ id, ...data });
+      setUploadedInfo(data);
       setView("download");
     } catch (err: any) {
-      setError(err.message || "Could not fetch file info");
-      setView("upload");
+      setError(err.message || "File not found or expired");
       window.history.pushState({}, "", "/");
+      setView("upload");
     }
-  };
+  }
 
-  const handleFileSelection = (selectedFile: File) => {
-    if (selectedFile.size > 50 * 1024 * 1024) {
-      setError("File size exceeds 50MB limit");
+  function onFileChosen(f?: File) {
+    if (!f) return;
+    if (f.size > 50 * 1024 * 1024) {
+      setError("File must be <= 50MB");
       return;
     }
-    setFile(selectedFile);
+    setFile(f);
     setError(null);
-  };
+  }
 
-  const cancelUpload = () => {
+  function cancelUpload() {
     if (xhrRef.current) {
       xhrRef.current.abort();
-      setUploading(false);
-      setProgress(0);
+      xhrRef.current = null;
     }
-  };
+    setUploading(false);
+    setProgress(0);
+  }
 
-  const uploadFile = async () => {
+  async function upload() {
     if (!file) return;
     setUploading(true);
     setProgress(0);
     setError(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
-    if (password.trim()) formData.append("password", password.trim());
+    const form = new FormData();
+    form.append("file", file);
+    if (password) form.append("password", password);
+    form.append("maxDownloads", "10");
 
     const xhr = new XMLHttpRequest();
     xhrRef.current = xhr;
 
-    xhr.upload.addEventListener("progress", (e) => {
+    xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        setProgress(percent);
+        setProgress(Math.round((e.loaded / e.total) * 100));
       }
-    });
+    };
 
-    xhr.addEventListener("load", async () => {
+    xhr.onload = async () => {
       setUploading(false);
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          // response contains: id, url, expiresAt, size, maxDownloads
+      try {
+        const ct = xhr.getResponseHeader("content-type") || "";
+        const text = xhr.responseText || "";
+
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // expect JSON
+          if (!ct.includes("application/json")) {
+            // sometimes Vercel returns HTML on error; present informative message
+            throw new Error("Server returned invalid response (not JSON).");
+          }
+          const data = JSON.parse(text);
           setUploadedInfo(data);
-          const shareUrl = data.url;
-          const qr = await QRCode.toDataURL(shareUrl);
-          setQrCodeUrl(qr);
+          const q = await QRCode.toDataURL(data.url);
+          setQr(q);
           setView("success");
-          // update browser URL to share path with token so sender can open link
-          // (keeps sender on same page but shows download path)
-          try {
-            const url = new URL(shareUrl);
-            window.history.replaceState({}, "", url.pathname + url.search);
-          } catch {}
-        } catch (e) {
-          setError("Invalid server response");
+          // update browser path to download link so receiver can open directly
+          window.history.pushState({}, "", `/download/${data.id}`);
+        } else {
+          let parsed = null;
+          try { parsed = JSON.parse(text); } catch (e) {}
+          const msg = parsed?.error || parsed?.message || `Upload failed (${xhr.status})`;
+          setError(msg);
         }
-      } else {
-        // try parse json error
-        let msg = "Upload failed. Please try again.";
-        try {
-          const j = JSON.parse(xhr.responseText);
-          if (j && j.error) msg = j.error;
-        } catch {}
-        setError(msg);
+      } catch (err: any) {
+        setError(err.message || "Upload failed. Please try again.");
       }
-    });
+    };
 
-    xhr.addEventListener("error", () => {
-      setError("Network error occurred.");
+    xhr.onerror = () => {
       setUploading(false);
-    });
+      setError("Network error during upload");
+    };
 
     xhr.open("POST", "/api/upload");
-    xhr.send(formData);
-  };
+    xhr.send(form);
+  }
 
-  const copyLink = async () => {
-    if (!uploadedInfo?.url) return;
+  async function handleReceiverDownload(providedPassword?: string) {
+    if (!uploadedInfo) return;
+    // Hit /api/download/:id with optional password query param
+    const id = uploadedInfo.id;
     try {
-      await navigator.clipboard.writeText(uploadedInfo.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError("Unable to copy to clipboard");
-    }
-  };
-
-  // DOWNLOAD FUNCTIONS FOR DOWNLOAD PAGE
-  const performTokenDownload = (id: string, token: string) => {
-    // open direct link => browser handles download headers
-    window.location.href = `/api/download/${encodeURIComponent(id)}?token=${encodeURIComponent(token)}`;
-  };
-
-  const performPasswordDownload = async (id: string, pw: string) => {
-    try {
-      setError(null);
-      const resp = await fetch(`/api/download/${encodeURIComponent(id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pw }),
-      });
-      if (!resp.ok) {
-        const j = await resp.json().catch(() => null);
-        throw new Error((j && j.error) || `Download failed (${resp.status})`);
+      const url = new URL(`/api/download/${id}`, window.location.origin);
+      if (providedPassword) url.searchParams.set("password", providedPassword);
+      const res = await fetch(url.toString());
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Download failed (${res.status})`);
       }
-      // read response as arrayBuffer and download client-side (so we can use filename from header)
-      const arr = await resp.arrayBuffer();
-      const contentDisposition = resp.headers.get("content-disposition");
-      const filenameMatch = contentDisposition ? contentDisposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';]+)/i) : null;
-      const filename = filenameMatch ? decodeURIComponent(filenameMatch[1]) : `download-${id}`;
+      // When server responds with file bytes this triggers browser download because endpoint sets headers.
+      // To navigate to url directly (so browser handles attachment) we can window.location = download-url with credentials in query:
+      // But we already successfully fetched; if it's redirect to blob URL, do full redirect:
+      if (res.redirected) {
+        window.location.href = res.url;
+      } else {
+        // If the server returns bytes in this fetch (arraybuffer), create blob and download
+        const buf = await res.arrayBuffer();
+        const blob = new Blob([buf]);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        // Reveal filename if server gave it via file-info? fetch file-info with reveal=true
+        let fname = "download.bin";
+        try {
+          const meta = await fetch(`/api/file-info?id=${id}&reveal=true`);
+          if (meta.ok) {
+            const md = await meta.json();
+            fname = md.filename || fname;
+          }
+        } catch (e) {}
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
 
-      const blob = new Blob([arr], { type: resp.headers.get("content-type") || "application/octet-stream" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      // After successful download, refresh file info to update counts or detect removal
+      setTimeout(() => {
+        fetchFileInfo(id);
+      }, 1200);
 
-      // after download, refresh file info to update counts or show expiry message
-      await fetchFileInfo(id);
     } catch (err: any) {
       setError(err.message || "Download failed");
     }
+  }
+
+  const copy = async () => {
+    if (!uploadedInfo) return;
+    await navigator.clipboard.writeText(uploadedInfo.url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   // UI pieces
-  const renderUpload = () => (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8 border border-gray-100 dark:border-gray-800 transition-all"
-    >
-      <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center p-3 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl mb-4">
-          <Upload size={28} />
-        </div>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">QuickShare</h1>
-        <p className="text-gray-500 dark:text-gray-400 text-sm">Fast, temporary, and secure file sharing</p>
-      </div>
-
-      {error && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-6 p-4 bg-red-50 text-red-600 rounded-2xl">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="font-semibold">Something went wrong</p>
-              <p className="opacity-80 text-sm">{error}</p>
-            </div>
-            <button onClick={() => setError(null)}><X /></button>
-          </div>
-        </motion.div>
-      )}
-
-      <div
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const f = e.dataTransfer?.files?.[0];
-          if (f) handleFileSelection(f);
-        }}
-        className={`relative border-2 border-dashed rounded-[1rem] p-8 transition-all duration-300 flex flex-col items-center justify-center gap-4 ${
-          file ? "border-emerald-400 bg-emerald-50/30" : "border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/10"
-        }`}
-      >
-        <div className="p-4 rounded-2xl bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600">
-          {file ? <File /> : <Upload />}
-        </div>
-
-        <div className="text-center">
-          {file ? (
-            <>
-              <p className="font-bold text-gray-900 dark:text-white truncate max-w-[260px]">{file.name}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-            </>
-          ) : (
-            <>
-              <p className="font-bold text-gray-900 dark:text-white">Drop your file here</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">or click to browse</p>
-              <p className="mt-2 text-[10px] text-gray-400 uppercase font-bold">Max 50MB • 10m Expiry</p>
-            </>
-          )}
-        </div>
-
-        <input type="file" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => e.target.files?.[0] && handleFileSelection(e.target.files[0])} disabled={uploading} />
-      </div>
-
-      <div className="mt-4">
-        <label className="text-xs font-bold text-gray-500">Password (optional — required to open without token)</label>
-        <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password (optional)" className="w-full mt-2 p-3 rounded border" />
-        <p className="text-[11px] text-gray-400 mt-1">If set, recipient can open file by entering this password. Password must be unique among active files.</p>
-      </div>
-
-      {uploading && (
-        <div className="mt-6">
-          <div className="flex justify-between items-center mb-2">
-            <div>
-              <p className="text-xs font-bold uppercase">Uploading</p>
-              <p className="text-sm font-semibold">{progress}% complete</p>
-            </div>
-            <button onClick={cancelUpload} className="text-xs text-red-500">Cancel</button>
-          </div>
-          <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden">
-            <motion.div className="h-full bg-indigo-600" initial={{ width: 0 }} animate={{ width: `${progress}%` }} />
-          </div>
-        </div>
-      )}
-
-      {!uploading && (
-        <button disabled={!file} onClick={uploadFile} className="w-full mt-6 py-4 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700">
-          <Upload size={18} /> &nbsp; Generate Secure Link
-        </button>
-      )}
-    </motion.div>
-  );
-
-  const renderSuccess = () => (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8">
-      <div className="text-center mb-6">
-        <div className="w-20 h-20 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-          <Check size={40} />
-        </div>
-        <h2 className="text-3xl font-bold">Ready to share!</h2>
-        <p className="text-sm text-gray-500 mt-1">Expires in <span className="font-mono">{uploadedInfo ? Math.max(0, Math.floor((uploadedInfo.expiresAt - Date.now()) / 1000 / 60)) : "0"}m</span></p>
-      </div>
-
-      <div className="mb-4">
-        <div className="p-4 border rounded flex items-center justify-between">
-          <div className="truncate text-sm">{uploadedInfo?.url}</div>
-          <button onClick={copyLink} className="ml-4 p-2 rounded bg-white">
-            {copied ? <Check /> : <Copy />}
-          </button>
-        </div>
-      </div>
-
-      <div className="mb-4">
-        <div className="bg-white p-4 rounded text-center">
-          {qrCodeUrl ? <img src={qrCodeUrl} alt="QR" className="mx-auto w-40 h-40" /> : <div className="h-40" />}
-        </div>
-      </div>
-
-      <div className="flex gap-3">
-        <button onClick={() => { setView("upload"); setFile(null); setUploadedInfo(null); setPassword(""); setQrCodeUrl(""); window.history.pushState({}, "", "/"); }} className="flex-1 py-3 rounded bg-gray-100">Upload another file</button>
-        <a href={uploadedInfo?.url} className="flex-1 py-3 rounded bg-indigo-600 text-white text-center">Open share link</a>
-      </div>
-    </motion.div>
-  );
-
-  const renderDownload = () => {
-    // parse token from url
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token") || undefined;
-    const id = uploadedInfo?.id;
-
-    return (
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8">
-        <div className="text-center mb-6">
-          <div className="w-20 h-20 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <File />
-          </div>
-          <h2 className="text-2xl font-bold">A file has been shared with you</h2>
-          <p className="text-sm text-gray-500 mt-1">Temporary & secure</p>
-        </div>
-
-        {error && <div className="bg-red-100 text-red-600 p-2 rounded mb-4">{error}</div>}
-
-        <div className="mb-4 p-4 border rounded">
-          <p className="text-sm text-gray-500">Expires in</p>
-          <p className="font-bold">{uploadedInfo ? Math.max(0, Math.floor((uploadedInfo.expiresAt - Date.now()) / 1000 / 60)) : 0} minutes</p>
-          <p className="text-sm text-gray-500 mt-2">Downloads: {uploadedInfo?.downloadCount} / {uploadedInfo?.maxDownloads}</p>
-        </div>
-
-        {token ? (
-          <button onClick={() => id && token && performTokenDownload(id, token)} className="w-full py-3 bg-indigo-600 text-white rounded mb-2">Download via link/QR</button>
-        ) : (
-          <>
-            {uploadedInfo?.requiresPassword ? (
-              <>
-                <p className="text-sm text-gray-500">This file requires a password to download.</p>
-                <input placeholder="Enter password" className="w-full p-3 rounded mt-2" onKeyDown={(e) => { if (e.key === "Enter" && id) performPasswordDownload(id, (e.target as HTMLInputElement).value); }} />
-                <button className="w-full mt-3 py-3 bg-indigo-600 text-white rounded" onClick={() => {
-                  const input = document.querySelector<HTMLInputElement>("input[placeholder='Enter password']");
-                  if (!input) return setError("Enter password");
-                  const pw = input.value.trim();
-                  if (!pw) return setError("Enter password");
-                  if (id) performPasswordDownload(id, pw);
-                }}>Download with password</button>
-              </>
-            ) : (
-              <>
-                {/* If no password and no token, still require some server rule; here we present a button that performs a GET (public). */}
-                <button onClick={() => { if (id) window.location.href = `/api/download/${encodeURIComponent(id)}`; }} className="w-full py-3 bg-indigo-600 text-white rounded">Download</button>
-              </>
-            )}
-          </>
-        )}
-
-        <button onClick={() => { setView("upload"); setFile(null); setUploadedInfo(null); window.history.pushState({}, "", "/"); }} className="w-full mt-3 py-3 bg-gray-100 rounded">Upload your own file</button>
-
-      </motion.div>
-    );
-  };
-
   return (
-    <div className="min-h-screen bg-[#F8F9FD] dark:bg-black flex items-center justify-center p-6">
-      <div className="fixed top-6 left-6 font-bold">
-        <div className="inline-flex items-center gap-2">
-          <div className="p-2 bg-indigo-600 text-white rounded"><ExternalLink /></div>
-          QuickShare
+    <div className="min-h-screen bg-[#F8F9FD] dark:bg-black flex items-center justify-center p-6 font-sans">
+      <div className="fixed top-6 left-6 flex items-center gap-2">
+        <div className="p-2 bg-indigo-600 text-white rounded-xl">
+          <ExternalLink size={18} />
         </div>
+        QuickShare
       </div>
 
-      <button onClick={() => setIsDark(!isDark)} className="fixed top-6 right-6 p-3 bg-white rounded">
+      <button className="fixed top-6 right-6 p-3 rounded" onClick={() => setIsDark(!isDark)}>
         {isDark ? <Sun /> : <Moon />}
       </button>
 
       <AnimatePresence mode="wait">
-        {view === "upload" && renderUpload()}
-        {view === "success" && uploadedInfo && renderSuccess()}
-        {view === "download" && uploadedInfo && renderDownload()}
+        {view === "upload" && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8 border">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center p-3 bg-indigo-50 text-indigo-600 rounded-2xl mb-4">
+                <Upload size={28} />
+              </div>
+              <h1 className="text-3xl font-bold">QuickShare</h1>
+              <p className="text-sm text-gray-500">Fast, temporary, and secure file sharing</p>
+            </div>
+
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 text-red-700 rounded">
+                <div className="flex justify-between items-start">
+                  <div><AlertCircle /> <strong className="block">Something went wrong</strong> <div className="text-sm">{error}</div></div>
+                  <button onClick={() => setError(null)}><X /></button>
+                </div>
+              </div>
+            )}
+
+            <div className={`border-2 border-dashed rounded p-8 text-center mb-4 ${file ? "border-emerald-400 bg-emerald-50/30" : "border-gray-200"}`}>
+              <div className="mb-3">
+                {file ? <File /> : <Upload />}
+              </div>
+              <div>
+                {file ? (<div className="font-semibold">{file.name}<div className="text-xs text-gray-500">{prettySize(file.size)}</div></div>) : (<div className="font-bold">Drop your file here or click to browse</div>)}
+                <div className="mt-3">
+                  <input type="file" onChange={(e) => onFileChosen(e.target.files?.[0])} className="block mx-auto" />
+                </div>
+              </div>
+            </div>
+
+            <label className="block text-xs text-gray-600 mb-2">Password (optional — required to open without token)</label>
+            <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter unique password (optional)" className="w-full p-3 mb-4 border rounded" />
+
+            {uploading && <div className="mb-4 text-sm">Uploading: {progress}%</div>}
+
+            <button disabled={!file || uploading} onClick={upload} className={`w-full py-3 rounded-lg text-white ${file ? "bg-indigo-600" : "bg-gray-300"}`}>Generate Secure Link</button>
+          </motion.div>
+        )}
+
+        {view === "success" && uploadedInfo && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8 border">
+            <div className="text-center mb-4">
+              <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-3"><Check size={40} /></div>
+              <h2 className="text-2xl font-bold">Ready to share!</h2>
+              <div className="text-sm text-gray-500 mt-2 flex items-center justify-center gap-2"><Clock size={14}/> Expires in <span className="font-mono ml-1">{timeLeft(uploadedInfo.expiresAt)}</span></div>
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded mb-4 flex items-center justify-between">
+              <div className="break-all text-sm">{uploadedInfo.url}</div>
+              <button onClick={copy} className="ml-3 p-2 bg-white rounded">{copied ? <Check /> : <Copy />}</button>
+            </div>
+
+            <div className="bg-white p-4 rounded mb-4 text-center">
+              <img src={qr} alt="QR" className="w-40 mx-auto" />
+              <div className="text-xs text-gray-500 mt-2">Scan to download</div>
+            </div>
+
+            <button className="w-full py-3 bg-gray-100 rounded" onClick={() => {
+              setView("upload");
+              setFile(null);
+              setUploadedInfo(null);
+              setPassword("");
+              window.history.pushState({}, "", "/");
+            }}>Upload another file</button>
+          </motion.div>
+        )}
+
+        {view === "download" && uploadedInfo && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="w-full max-w-md bg-white dark:bg-gray-900 rounded-[2rem] shadow-2xl p-8 border">
+            <div className="text-center mb-4">
+              <div className="w-20 h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto mb-3"><File /></div>
+              <h2 className="text-2xl font-bold">Secure Download</h2>
+              <div className="text-sm text-gray-500 mt-2">This file is temporary and private.</div>
+            </div>
+
+            <div className="p-4 bg-amber-50 rounded mb-4">
+              <div className="text-sm">This file will be removed after reaching the download limit or expiry.</div>
+              <div className="flex gap-3 mt-3">
+                <div className="bg-white p-2 rounded text-center flex-1">
+                  <div className="text-xs text-gray-400">Downloads</div>
+                  <div className="font-bold">{uploadedInfo.downloadCount} / {uploadedInfo.maxDownloads}</div>
+                </div>
+                <div className="bg-white p-2 rounded text-center flex-1">
+                  <div className="text-xs text-gray-400">Expires</div>
+                  <div className="font-bold">{timeLeft(uploadedInfo.expiresAt)}</div>
+                </div>
+              </div>
+            </div>
+
+            {uploadedInfo.hasPassword && (
+              <div className="mb-4">
+                <label className="block text-xs text-gray-600 mb-2">Enter password to download</label>
+                <input id="recv-pass" className="w-full p-3 border rounded" placeholder="File password" />
+                <div className="mt-2">
+                  <button className="w-full py-2 bg-indigo-600 text-white rounded" onClick={() => {
+                    const val = (document.getElementById("recv-pass") as HTMLInputElement).value;
+                    handleReceiverDownload(val);
+                  }}>Unlock & Download</button>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <button onClick={() => handleReceiverDownload()} className="w-full py-3 bg-indigo-600 text-white rounded">Download (via link/QR)</button>
+              <button onClick={() => { window.location.href = "/"; }} className="w-full py-2 bg-gray-100 rounded">Use QuickShare / Upload your own file</button>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
     </div>
   );
+}
+
+// small helpers
+function prettySize(bytes: number) {
+  if (!bytes) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes","KB","MB","GB"];
+  const i = Math.floor(Math.log(bytes)/Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+function timeLeft(ts:number) {
+  const s = Math.max(0, Math.floor((ts - Date.now())/1000));
+  const m = Math.floor(s/60);
+  const sec = s%60;
+  return `${m}:${sec.toString().padStart(2,"0")}`;
 }
