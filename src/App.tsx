@@ -4,7 +4,7 @@ import {
   Clock, AlertCircle, Sun, Moon, X, FileText, Image as ImageIcon, 
   Music, Video, Archive, ExternalLink
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence } from "framer-motion";
 import QRCode from "qrcode";
 
 type View = "upload" | "success" | "download";
