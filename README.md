@@ -1,79 +1,153 @@
-# QuickShare
+# 🚀 QuickShare
 
-QuickShare is a fast, temporary, and secure file-sharing web application.
-Users can upload files and generate secure links that allow limited downloads within a specified expiration time.
+QuickShare is a fast, secure, and temporary file-sharing web application that allows users to upload files and generate short, shareable links with expiration and download limits.
 
-## 🚀 Live Demo
+---
 
-https://quickshare-app-nine.vercel.app
+## 🌐 Live Demo
+
+👉 https://quickshare-app-nine.vercel.app
+
+---
+
+## ✨ Features
+
+- 📤 Drag & drop file upload
+- 🔗 Short and clean shareable links
+- ⏳ Auto file expiration (10 minutes)
+- 🔐 Optional password protection
+- 📥 Download limits (max downloads)
+- ⚡ Instant file access via secure links
+- ☁️ Cloud storage using Vercel Blob
+- 🧠 Metadata storage using Vercel KV (Redis)
+
+---
+
+## 🏗 Architecture
+
+```
+Frontend (React + Vite)
+        ↓
+Vercel Serverless Functions (API)
+        ↓
+Vercel Blob (File Storage)
+        +
+Vercel KV (Metadata Storage)
+```
+
+---
 
 ## 🛠 Tech Stack
+
+### Frontend
 
 - React
 - TypeScript
 - Vite
+
+### Backend
+
+- Vercel Serverless Functions
 - Node.js
-- Git
-- GitHub
-- Vercel (Deployment)
 
-## 📦 Features
+### Storage
 
-- Drag-and-drop file upload
-- Secure link generation
-- Temporary file sharing
-- Download limits
-- File expiration system
+- Vercel Blob (File storage)
+- Vercel KV (Redis for metadata)
 
-## ⚙️ Run Locally
+### Deployment
 
-### Prerequisites
+- Vercel
 
-- Node.js installed
+---
 
-### Steps
+## 📁 Project Structure
 
-1. Clone the repository
+```
+quickshare-app
+ ├── api
+ │   ├── upload.ts
+ │   ├── file-info.ts
+ │   ├── download
+ │   │   └── [id].ts
+ │   └── store.ts
+ │
+ ├── src
+ │   ├── App.tsx
+ │   ├── main.tsx
+ │   └── styles
+ │
+ ├── index.html
+ ├── package.json
+ ├── vite.config.ts
+ └── vercel.json
+```
+
+---
+
+## ⚙️ Environment Variables
+
+Create a `.env` file:
+
+```
+BLOB_READ_WRITE_TOKEN=your_blob_token
+KV_REST_API_URL=your_kv_url
+KV_REST_API_TOKEN=your_kv_token
+```
+
+---
+
+## 🚀 Run Locally
+
+### 1. Clone the repository
 
 ```
 git clone https://github.com/kirankumarsuryavamshi34-web/quickshare-app.git
-```
-
-2. Navigate to the project folder
-
-```
 cd quickshare-app
 ```
 
-3. Install dependencies
+### 2. Install dependencies
 
 ```
 npm install
 ```
 
-4. Start the development server
+### 3. Start development server
 
 ```
 npm run dev
 ```
 
-## 🌐 Deployment
+---
 
-The project is deployed using **Vercel**.
-Every push to the main branch automatically triggers deployment.
+## 🚀 Deployment
 
-## 📌 Project Structure
+Deployed on **Vercel**
 
-```
-quickshare
- ├ api
- │   └ upload.ts
- ├ src
- ├ index.html
- ├ package.json
- └ vite.config.ts
-```
+- Automatic deployment on push to `main`
+- Serverless backend + edge storage
+
+---
+
+## 📌 Future Improvements
+
+- 📊 File analytics dashboard
+- 📱 QR code sharing
+- 👀 File preview before download
+- 🔗 Custom short links
+- 🌐 Custom domain support
+
+---
 
 ## 📄 License
 
 This project is open-source and available under the MIT License.
+
+---
+
+## 👨‍💻 Author
+
+**Suryavamshi Kiran Kumar**
+
+- GitHub: https://github.com/kirankumarsuryavamshi34-web
+- LinkedIn: https://linkedin.com/in/suryavamshi-kiran-kumar
