@@ -49,6 +49,8 @@ interface UploadResponse {
   error?: string;
 }
 
+const SHORT_ID_REGEX = /^\/(?:download\/)?([A-Za-z0-9_-]{6})$/;
+
 const FileIcon = ({
   filename,
   size = 32,
@@ -144,11 +146,10 @@ export default function App() {
 
   useEffect(() => {
     const path = window.location.pathname;
-    if (path.startsWith("/download/")) {
-      const id = path.split("/")[2];
-      if (id) {
-        fetchFileInfo(id);
-      }
+    const match = path.match(SHORT_ID_REGEX);
+
+    if (match?.[1]) {
+      fetchFileInfo(match[1]);
     }
   }, []);
 
@@ -338,7 +339,7 @@ export default function App() {
   const handleDownload = () => {
     if (!uploadedInfo) return;
 
-    let downloadUrl = `/api/download/${encodeURIComponent(uploadedInfo.id)}`;
+    let downloadUrl = `/${uploadedInfo.id}`;
 
     if (uploadedInfo.hasPassword) {
       if (!receiverPassword.trim()) {

@@ -1,19 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { del, list } from "@vercel/blob";
-import { files } from "../upload";
+import { del } from "@vercel/blob";
+import { files } from "../store";
 
-async function getBlobUrl(prefix: string) {
-  const result = await list({
-    prefix,
-    limit: 1,
-  });
-  return result.blobs[0]?.url || null;
-}
-
-export default async function handler(
-  req: VercelRequest,
-  res: VercelResponse
-) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -35,12 +24,6 @@ export default async function handler(
     }
 
     if (Date.now() > file.expiresAt) {
-      const expiredBlobUrl = await getBlobUrl(`quickshare/${file.id}-`);
-      if (expiredBlobUrl) {
-        try {
-          await del(expiredBlobUrl);
-        } catch {}
-      }
       files.delete(fileId);
       return res.status(404).send("File not found or expired");
     }
@@ -49,9 +32,8 @@ export default async function handler(
       return res.status(401).send("Invalid password");
     }
 
-    const blobUrl = await getBlobUrl(`quickshare/${file.id}-`);
-
-    if (!blobUrl) {
+    const blobUrl = file.blobUrl;
+    if (!file.blobUrl) {
       files.delete(fileId);
       return res.status(404).send("File not found or expired");
     }
@@ -61,10 +43,10 @@ export default async function handler(
     if (file.downloadCount >= file.maxDownloads) {
       setTimeout(async () => {
         try {
-          await del(blobUrl);
+          await del(file.blobUrl);
         } catch {}
         files.delete(fileId);
-      }, 1500);
+      }, 1000);
     }
 
     return res.redirect(blobUrl);
