@@ -3,7 +3,20 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
 import { put } from "@vercel/blob";
 import { nanoid } from "nanoid";
-import { files, type FileRecord } from "./store.js";
+import { setFile, getFile } from "./store.js";
+
+export type FileRecord = {
+  id: string;
+  filename: string;
+  size: number;
+  url: string;
+  expiresAt: number;
+  downloadCount: number;
+  maxDownloads: number;
+  password: string | null;
+  hasPassword: boolean;
+  blobUrl: string | null;
+};
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -43,8 +56,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return safeJsonError(res, 405, "Method not allowed");
     }
 
-    console.log("TOKEN:", process.env.BLOB_READ_WRITE_TOKEN);
-
     await runMiddleware(req, res, upload.single("file"));
 
     const file = (req as any).file;
@@ -55,27 +66,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return safeJsonError(res, 400, "No file uploaded");
     }
 
-    // unique password among active files
-    if (password) {
-      for (const existing of files.values()) {
-        if (
-          existing.password === password &&
-          existing.expiresAt > Date.now() &&
-          existing.downloadCount < existing.maxDownloads
-        ) {
-          return safeJsonError(
-            res,
-            400,
-            "This password is already in use by an active file. Choose another."
-          );
-        }
-      }
-    }
-
-    // short unique id
+    // ✅ generate unique short id
     let id = nanoid(6);
-    while (files.has(id)) {
+
+    // ensure no collision (very rare)
+    let existing = await getFile(id);
+    while (existing) {
       id = nanoid(6);
+      existing = await getFile(id);
     }
 
     const pathname = `quickshare/${id}`;
@@ -107,7 +105,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       blobUrl: blobResult?.url ?? null,
     };
 
-    files.set(id, fileData);
+    // ✅ store in KV (with expiry handled in store.ts)
+    await setFile(id, fileData);
 
     return res.status(200).json({
       id,
@@ -121,7 +120,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       blobUrl: blobResult?.url ?? null,
     });
   } catch (topErr) {
-    console.error("UPLOAD handler top-level error:", topErr);
-    return safeJsonError(res, 500, "Unexpected server error during upload", String(topErr));
+    console.error("UPLOAD handler error:", topErr);
+    return safeJsonError(res, 500, "Unexpected server error", String(topErr));
   }
 }

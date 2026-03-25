@@ -1,3 +1,5 @@
+// api/store.ts
+import { kv } from "@vercel/kv";
 
 export type FileRecord = {
   id: string;
@@ -12,12 +14,18 @@ export type FileRecord = {
   blobUrl: string | null;
 };
 
-declare global {
-  // eslint-disable-next-line no-var
-  var __quickshare_files__: Map<string, FileRecord> | undefined;
+// ✅ store file with TTL (10 minutes)
+export async function setFile(id: string, data: FileRecord) {
+  await kv.set(id, data, { ex: 600 });
 }
 
-export const files =
-  global.__quickshare_files__ || new Map<string, FileRecord>();
+// ✅ get file safely
+export async function getFile(id: string): Promise<FileRecord | null> {
+  const data = await kv.get(id);
+  return data as FileRecord | null;
+}
 
-global.__quickshare_files__ = files;
+// ✅ delete file
+export async function deleteFile(id: string) {
+  await kv.del(id);
+}

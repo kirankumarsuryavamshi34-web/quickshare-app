@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { files } from "./store.js";
+import { getFile, deleteFile } from "./store.js";
 
 export default async function handler(
   req: VercelRequest,
@@ -16,10 +16,15 @@ export default async function handler(
       return res.status(400).json({ error: "Missing file id" });
     }
 
-    const file = files.get(id);
+    const file: any = await getFile(id);
 
-    if (!file || Date.now() > file.expiresAt) {
-      files.delete(id);
+    if (!file) {
+      return res.status(404).json({ error: "File not found or expired" });
+    }
+
+    // check expiry
+    if (Date.now() > file.expiresAt) {
+      await deleteFile(id);
       return res.status(404).json({ error: "File not found or expired" });
     }
 
