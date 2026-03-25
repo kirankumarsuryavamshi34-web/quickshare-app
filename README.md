@@ -12,13 +12,15 @@ QuickShare is a fast, secure, and temporary file-sharing web application that al
 
 ## 📸 Screenshots
 
-![photo1](./screenshots/photo1.png)
+<p align="center">
+  <img src="./screenshots/photo1.png" width="45%" />
+  <img src="./screenshots/photo2.png" width="45%" />
+</p>
 
-![photo2](./screenshots/photo2.png)
-
-![photo3](./screenshots/photo3.png)
-
-![photo4](./screenshots/photo4.png)
+<p align="center">
+  <img src="./screenshots/photo3.png" width="45%" />
+  <img src="./screenshots/photo4.png" width="45%" />
+</p>
 
 ---
 
