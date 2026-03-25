@@ -10,6 +10,18 @@ QuickShare is a fast, secure, and temporary file-sharing web application that al
 
 ---
 
+## 📸 Screenshots
+
+![photo1](./screenshots/photo1.png)
+
+![photo2](./screenshots/photo2.png)
+
+![photo3](./screenshots/photo3.png)
+
+![photo4](./screenshots/photo4.png)
+
+---
+
 ## ✨ Features
 
 - 📤 Drag & drop file upload
