@@ -84,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       id = nanoid(6);
     }
 
-    const pathname = `quickshare/${id}-${file.originalname}`;
+    const pathname = `quickshare/${id}`;
 
     let blobResult;
     try {

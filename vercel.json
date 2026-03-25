@@ -1,16 +1,16 @@
 {
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
     },
     {
-      "source": "/:id([A-Za-z0-9_-]{6})",
-      "destination": "/api/download/:id"
+      "src": "/([A-Za-z0-9_-]{6})",
+      "dest": "/api/download/$1"
     },
     {
-      "source": "/:path*",
-      "destination": "/"
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }

@@ -18,11 +18,7 @@ export default async function handler(
 
     const file = files.get(id);
 
-    if (!file) {
-      return res.status(404).json({ error: "File not found or expired" });
-    }
-
-    if (Date.now() > file.expiresAt) {
+    if (!file || Date.now() > file.expiresAt) {
       files.delete(id);
       return res.status(404).json({ error: "File not found or expired" });
     }

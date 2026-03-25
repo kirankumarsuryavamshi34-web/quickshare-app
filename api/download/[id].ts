@@ -19,11 +19,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const file = files.get(fileId);
 
-    if (!file) {
-      return res.status(404).send("File not found or expired");
-    }
-
-    if (Date.now() > file.expiresAt) {
+    if (!file || Date.now() > file.expiresAt) {
       files.delete(fileId);
       return res.status(404).send("File not found or expired");
     }
