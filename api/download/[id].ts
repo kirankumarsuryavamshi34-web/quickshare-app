@@ -39,23 +39,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(404).send("File not found or expired");
     }
 
+    const response = await fetch(file.blobUrl);
+
+    const buffer = await response.arrayBuffer();
+
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${file.filename || "file"}"`
+    );
+
     // increment download count
     file.downloadCount += 1;
-
-    // update in KV
     await setFile(fileId, file);
 
     // delete after max downloads
     if (file.downloadCount >= file.maxDownloads) {
-      setTimeout(async () => {
-        try {
-          await del(file.blobUrl);
-        } catch {}
-        await deleteFile(fileId);
-      }, 1000);
-    }
+    setTimeout(async () => {
+    try {
+      await del(file.blobUrl);
+    } catch {}
+    await deleteFile(fileId);
+  }, 1000);
+}
 
-    return res.redirect(file.blobUrl);
+return res.send(Buffer.from(buffer));
   } catch (error: any) {
     console.error("DOWNLOAD ERROR:", error);
     return res.status(500).send(error?.message || "Download failed");

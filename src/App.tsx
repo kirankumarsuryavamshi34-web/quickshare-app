@@ -349,7 +349,7 @@ export default function App() {
       downloadUrl += `?password=${encodeURIComponent(receiverPassword.trim())}`;
     }
 
-    window.location.href = downloadUrl;
+    window.open(downloadUrl, "_blank");
   };
 
   const resetToUpload = () => {
