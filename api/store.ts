@@ -1,4 +1,3 @@
-// api/store.ts
 
 export type FileRecord = {
   id: string;
