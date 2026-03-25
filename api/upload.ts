@@ -43,13 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return safeJsonError(res, 405, "Method not allowed");
     }
 
-    if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.VERCEL_BLOB_READ_WRITE_TOKEN) {
-      return safeJsonError(
-        res,
-        500,
-        "Server misconfiguration: missing blob token. Please set BLOB_READ_WRITE_TOKEN in Vercel settings."
-      );
-    }
+    console.log("TOKEN:", process.env.BLOB_READ_WRITE_TOKEN);
 
     await runMiddleware(req, res, upload.single("file"));
 
