@@ -146,7 +146,7 @@ export default function App() {
 
   useEffect(() => {
     const path = window.location.pathname;
-    const match = path.match(SHORT_ID_REGEX);
+    const match = path.match(/^\/([A-Za-z0-9_-]{6})$/);
 
     if (match?.[1]) {
       fetchFileInfo(match[1]);
