@@ -339,7 +339,7 @@ export default function App() {
   const handleDownload = () => {
     if (!uploadedInfo) return;
 
-    let downloadUrl = `/${uploadedInfo.id}`;
+    let downloadUrl = `/api/download/${uploadedInfo.id}`;
 
     if (uploadedInfo.hasPassword) {
       if (!receiverPassword.trim()) {
