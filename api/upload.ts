@@ -3,7 +3,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import multer from "multer";
 import { put } from "@vercel/blob";
 import { nanoid } from "nanoid";
-import { files, type FileRecord } from "./store";
+import { files, type FileRecord } from "./store.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
